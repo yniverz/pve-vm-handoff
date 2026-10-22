@@ -1,0 +1,82 @@
+# pve-vm-handoff configuration
+# Durations take Go syntax ("90s", "3m", "1h30m") or plain seconds.
+# Any value may use ${ENV_VAR} or ${ENV_VAR:-fallback}, so secrets can live in the environment.
+
+server:
+  listen: ":8080"
+  title: "GPU Handoff"
+  # How often guest status is polled.
+  poll_interval: 5s
+  # Header your auth proxy sets with the signed-in user (name or email). Leave empty if
+  # there is none; then everyone is anonymous and allowed_users lists can't match anybody.
+  # user_header: X-Forwarded-Email
+  # Keeps pause flags and "who used the group last" across restarts.
+  state_file: /data/state.json
+
+# One entry per Proxmox host or cluster. For a cluster, any one node's URL is enough.
+hosts:
+  pve:
+    url: https://pve.example.lan:8006
+    token_id: "handoff@pve!handoff"
+    token_secret: "${PVE_TOKEN_SECRET}"
+    # Set to false for Proxmox's default self-signed certificate.
+    verify_tls: false
+    timeout: 15s
+
+# Settings every VM starts from; anything set on a VM below wins.
+defaults:
+  # What the UI offers for a VM: start, shutdown (graceful, ACPI/agent), stop (hard power-off).
+  actions: [start, shutdown]
+  # How long a graceful shutdown may take.
+  shutdown_timeout: 3m
+  # Power off hard when the graceful shutdown didn't finish in time.
+  # Without it the handoff aborts and the running VM stays up.
+  force_stop_after_timeout: false
+  start_timeout: 2m
+  # Whether starting another VM of a shared group may shut this one down.
+  displaceable: true
+
+vms:
+  workstation:
+    host: pve
+    vmid: 101
+    name: "My Workstation"
+    description: "Main desktop with the RTX passthrough"
+    # node: pve1     # optional, found automatically
+    # type: qemu     # optional, qemu or lxc, found automatically
+    force_stop_after_timeout: true
+  friend-gaming:
+    host: pve
+    vmid: 102
+    name: "Friend's Gaming VM"
+    description: "Shut it down from Windows when you're done, the workstation comes back by itself"
+    actions: [start, shutdown, stop]
+    # Restrict who may control this VM (needs server.user_header). Empty = everyone.
+    # allowed_users: [friend@example.com, me@example.com]
+
+# Members of a group can never run at the same time. Starting one shuts the others down first.
+# A VM can be in several groups (e.g. one per GPU); it then conflicts with members of all of them.
+groups:
+  gpu:
+    name: "RTX 4090"
+    description: "Only one of these VMs can use the GPU at a time"
+    members: [workstation, friend-gaming]
+    # VM that comes back when the group has been idle.
+    default: workstation
+    # after_handoff: only after another member ran (if you shut down the default yourself, it stays off)
+    # always:        whenever no member runs for return_delay
+    # never:         no automatic return
+    return_to_default: after_handoff
+    return_delay: 60s
+    # Who may pause/resume the automatic return (needs server.user_header). Empty = everyone.
+    # allowed_users: [me@example.com]
+
+# Optional webhooks. format "json" posts the event object, "text" posts a plain message
+# (works directly with ntfy). Events: start, shutdown, stop, switch, auto_return, pause, error.
+notifications: []
+#  - url: https://ntfy.sh/my-handoff-topic
+#    format: text
+#    headers: { Title: "VM Handoff" }
+#    events: [switch, auto_return, error]
+#  - url: https://example.com/hook
+#    format: json

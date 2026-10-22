@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VM Handoff</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f7cff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7h10l-3-3M17 17H7l3 3'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f6f8; --card: #fff; --text: #1b1f24; --muted: #667080; --line: #e3e6eb;
+  --accent: #3b6cf6; --accent-text: #fff; --ok: #1f9d55; --ok-bg: #e5f6ec; --off: #8a94a3; --off-bg: #eef0f3;
+  --warn: #b7791f; --warn-bg: #fdf3e1; --bad: #d64545; --bad-bg: #fbe9e9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --card: #1a1e24; --text: #e6e9ee; --muted: #8c95a3; --line: #2a3038;
+    --accent: #5b85ff; --ok: #4cc584; --ok-bg: #173325; --off: #8c95a3; --off-bg: #242a32;
+    --warn: #e0a84a; --warn-bg: #362b17; --bad: #f07070; --bad-bg: #3a1d1d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0; }
+.meta { color: var(--muted); font-size: 13px; }
+.banner { border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; display: none; align-items: center; gap: 10px; }
+.banner.show { display: flex; }
+.banner.busy { background: var(--warn-bg); color: var(--warn); }
+.banner.err { background: var(--bad-bg); color: var(--bad); }
+.spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.group { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 18px; overflow: hidden; }
+.group-head { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+.group-head h2 { font-size: 17px; margin: 0; }
+.group-head p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.auto { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vm { padding: 14px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.vm + .vm { border-top: 1px solid var(--line); }
+.vm-info { min-width: 0; flex: 1 1 260px; }
+.vm-name { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vm-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.vm-err { color: var(--bad); font-size: 13px; margin-top: 2px; }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--off-bg); color: var(--off); }
+.pill.running { background: var(--ok-bg); color: var(--ok); }
+.pill.unknown, .pill.missing { background: var(--bad-bg); color: var(--bad); }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; font-size: 14px; border-radius: 8px; padding: 7px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--bad); }
+button.link { border: none; background: none; color: var(--accent); padding: 0; font-size: 13px; }
+button:disabled { opacity: .5; cursor: default; }
+.hint { font-size: 12px; color: var(--muted); }
+section.log h2 { font-size: 15px; margin: 28px 0 8px; }
+.log ul { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.log li { padding: 8px 14px; font-size: 13px; display: flex; gap: 12px; }
+.log li + li { border-top: 1px solid var(--line); }
+.log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+.log .error { color: var(--bad); }
+.empty { color: var(--muted); padding: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">VM Handoff</h1>
+    <span class="meta" id="meta"></span>
+  </header>
+  <div class="banner busy" id="busy"><span class="spinner"></span><span id="busy-text"></span></div>
+  <div class="banner err" id="err"><span id="err-text"></span></div>
+  <div id="groups"></div>
+  <section class="log">
+    <h2>Activity</h2>
+    <ul id="events"></ul>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null, pending = false, errTimer = null;
+
+function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) n.append(c);
+  return n;
+}
+
+function duration(s) {
+  s = Math.round(s);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m " + (s % 60) + "s";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h " + (m % 60) + "m";
+  return Math.floor(h / 24) + "d " + (h % 24) + "h";
+}
+
+function showError(msg) {
+  $("err-text").textContent = msg;
+  $("err").classList.add("show");
+  clearTimeout(errTimer);
+  errTimer = setTimeout(() => $("err").classList.remove("show"), 8000);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Requested-With": "pve-vm-handoff", "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function act(vm, action) {
+  if (action === "start" && vm.displaces.length) {
+    if (!confirm(`Starting ${vm.name} will shut down ${vm.displaces.join(", ")}. Continue?`)) return;
+  }
+  if (action === "stop" && !confirm(`Force-stop ${vm.name}? This is like pulling the power plug.`)) return;
+  if (action === "shutdown" && !confirm(`Shut down ${vm.name}?`)) return;
+  pending = true; render();
+  try { await api(`/api/vms/${encodeURIComponent(vm.id)}/${action}`, {}); }
+  catch (e) { showError(e.message); }
+  pending = false;
+  refresh();
+}
+
+async function setPaused(g, paused) {
+  try { await api(`/api/groups/${encodeURIComponent(g.id)}/pause`, { paused }); }
+  catch (e) { showError(e.message); }
+  refresh();
+}
+
+const labels = { start: "Start", shutdown: "Shut down", stop: "Force stop" };
+
+function vmRow(vm, group) {
+  const locked = pending || !!state.busy;
+  const buttons = vm.actions.map((a) =>
+    el("button", { class: a === "start" ? "primary" : a === "stop" ? "danger" : "", disabled: locked, onclick: () => act(vm, a) },
+      a === "start" && vm.displaces.length ? "Switch to this" : labels[a]));
+  const sub = [`${vm.type || "vm"} ${vm.vmid}`, vm.node ? `on ${vm.node}` : vm.host];
+  if (vm.status === "running" && vm.uptime) sub.push("up " + duration(vm.uptime));
+  return el("div", { class: "vm" },
+    el("div", { class: "vm-info" },
+      el("div", { class: "vm-name" }, vm.name,
+        el("span", { class: "pill " + vm.status }, vm.status),
+        group && group.default === vm.id ? el("span", { class: "tag" }, "default") : null),
+      vm.description ? el("div", { class: "vm-sub" }, vm.description) : null,
+      el("div", { class: "vm-sub" }, sub.join(" · ")),
+      vm.error ? el("div", { class: "vm-err" }, vm.error) : null,
+      vm.blocked && vm.status === "stopped" ? el("div", { class: "hint" }, "Can't start: " + vm.blocked) : null),
+    el("div", { class: "buttons" }, buttons));
+}
+
+function autoInfo(g, vms) {
+  if (!g.default || g.return_mode === "never") return el("div", { class: "auto" }, "No automatic return");
+  const def = vms[g.default]?.name || g.default;
+  let text;
+  if (g.paused) text = `Automatic return to ${def} is paused`;
+  else if (g.return_in !== null) text = `Starting ${def} in ${duration(g.return_in)}`;
+  else if (g.return_mode === "always") text = `Returns to ${def} after ${duration(g.return_delay)} idle`;
+  else text = `Returns to ${def} ${duration(g.return_delay)} after someone else is done`;
+  return el("div", { class: "auto" }, text,
+    g.can_pause ? el("button", { class: "link", onclick: () => setPaused(g, !g.paused) }, g.paused ? "Resume" : "Pause") : null);
+}
+
+function render() {
+  if (!state) return;
+  document.title = state.title;
+  $("title").textContent = state.title;
+  const meta = [];
+  if (state.user) meta.push(state.user);
+  if (state.last_refresh && !state.last_refresh.startsWith("0001")) meta.push("updated " + new Date(state.last_refresh).toLocaleTimeString());
+  $("meta").textContent = meta.join(" · ");
+  $("busy-text").textContent = state.busy || "";
+  $("busy").classList.toggle("show", !!state.busy);
+
+  const vms = Object.fromEntries(state.vms.map((v) => [v.id, v]));
+  const grouped = new Set();
+  const out = (state.groups || []).map((g) => {
+    g.members.forEach((m) => grouped.add(m));
+    return el("div", { class: "group" },
+      el("div", { class: "group-head" },
+        el("div", {}, el("h2", {}, g.name), g.description ? el("p", {}, g.description) : null),
+        autoInfo(g, vms)),
+      g.members.map((m) => vmRow(vms[m], g)));
+  });
+  const loose = state.vms.filter((v) => !grouped.has(v.id));
+  if (loose.length) {
+    out.push(el("div", { class: "group" },
+      el("div", { class: "group-head" }, el("h2", {}, "Other VMs")),
+      loose.map((v) => vmRow(v, null))));
+  }
+  $("groups").replaceChildren(...out);
+
+  const events = (state.events || []).map((e) =>
+    el("li", {}, el("time", { datetime: e.time }, new Date(e.time).toLocaleString([], { dateStyle: "short", timeStyle: "short" })),
+      el("span", { class: e.kind === "error" ? "error" : "" }, e.message + (e.user ? ` (${e.user})` : ""))));
+  $("events").replaceChildren(...(events.length ? events : [el("li", { class: "empty" }, "Nothing happened yet.")]));
+}
+
+async function refresh() {
+  try { state = await api("/api/state"); render(); }
+  catch (e) { showError("Can't reach the server: " + e.message); }
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

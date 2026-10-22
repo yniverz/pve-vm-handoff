@@ -1,0 +1,52 @@
+# Portainer: Stacks > Add stack > Web editor, paste this file, then set PVE_TOKEN_SECRET
+# under "Environment variables". Edit the config below to your hosts and VMs.
+# Update later with "Pull and redeploy".
+#
+# Prefer a config file? Remove CONFIG_YAML and mount one instead:
+#   volumes:
+#     - /opt/pve-vm-handoff/config.yaml:/config/config.yaml:ro
+services:
+  pve-vm-handoff:
+    image: ghcr.io/yniverz/pve-vm-handoff:latest
+    pull_policy: always
+    container_name: pve-vm-handoff
+    restart: unless-stopped
+    ports:
+      - "${HANDOFF_PORT:-8080}:8080"
+    environment:
+      TZ: Europe/Berlin
+      # Compose fills in ${PVE_TOKEN_SECRET} from the stack's environment variables.
+      CONFIG_YAML: |
+        server:
+          title: "GPU Handoff"
+          state_file: /data/state.json
+          # user_header: X-Forwarded-Email
+        hosts:
+          pve:
+            url: https://pve.example.lan:8006
+            token_id: "handoff@pve!handoff"
+            token_secret: "${PVE_TOKEN_SECRET}"
+            verify_tls: false
+        vms:
+          workstation:
+            host: pve
+            vmid: 101
+            name: "My Workstation"
+            force_stop_after_timeout: true
+          friend:
+            host: pve
+            vmid: 102
+            name: "Friend's Gaming VM"
+            actions: [start, shutdown, stop]
+        groups:
+          gpu:
+            name: "GPU"
+            members: [workstation, friend]
+            default: workstation
+            return_to_default: after_handoff
+            return_delay: 60s
+    volumes:
+      - handoff-data:/data
+
+volumes:
+  handoff-data:

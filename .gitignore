@@ -1,0 +1,4 @@
+/pve-vm-handoff
+/config.yaml
+/data/
+.env
